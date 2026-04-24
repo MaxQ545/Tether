@@ -8,12 +8,13 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
 
 config="${1:-release}"
+build_path="$here/build"
 
-echo "==> swift build -c $config"
-swift build -c "$config"
+echo "==> swift build -c $config (--build-path $build_path)"
+swift build -c "$config" --build-path "$build_path"
 
-bin_path="$(swift build -c "$config" --show-bin-path)"
-app_dir="$here/build/Tether.app"
+bin_path="$(swift build -c "$config" --build-path "$build_path" --show-bin-path)"
+app_dir="$build_path/Tether.app"
 contents="$app_dir/Contents"
 
 echo "==> assembling $app_dir"

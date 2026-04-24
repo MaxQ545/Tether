@@ -113,18 +113,22 @@ struct MenuBarContent: View {
                     .font(.body)
                 TimelineView(.periodic(from: .now, by: 1.0)) { _ in
                     VStack(alignment: .leading, spacing: 3) {
-                        statusRow(
-                            icon: "arrow.up",
-                            label: "code",
-                            status: projectStatus?.code,
-                            enabled: project.isEnabled
-                        )
-                        statusRow(
-                            icon: "arrow.down",
-                            label: "log",
-                            status: projectStatus?.log,
-                            enabled: project.isEnabled
-                        )
+                        if project.pushCodeEnabled {
+                            statusRow(
+                                icon: "arrow.up",
+                                label: "push",
+                                status: projectStatus?.code,
+                                enabled: project.isEnabled
+                            )
+                        }
+                        if project.pullLogEnabled {
+                            statusRow(
+                                icon: "arrow.down",
+                                label: "pull",
+                                status: projectStatus?.log,
+                                enabled: project.isEnabled
+                            )
+                        }
                     }
                 }
             }

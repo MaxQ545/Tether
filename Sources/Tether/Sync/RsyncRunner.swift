@@ -71,29 +71,107 @@ enum RsyncRunner {
     }
 
     static func push(project: ProjectConfig) -> RsyncResult {
-        let localRoot = project.localCodePath.hasSuffix("/") ? project.localCodePath : project.localCodePath + "/"
-        let remote = project.remoteCodePath
-        let excludeFile = IgnoreRules.excludeFromFile(forProjectAt: project.localCodePath)
-
-        var args = commonArgs() + ["--delete", "-e", sshCommand(project)]
-        if let ef = excludeFile {
-            args.append("--exclude-from=\(ef.path)")
+        let pairs = zip(project.localCodePaths, project.remoteCodePaths).map {
+            SubpathPair(label: labelFor(localPath: $0.0), source: ensureTrailingSlash($0.0), dest: $0.1, gitignoreRoot: $0.0)
         }
-        args.append(contentsOf: project.extraRsyncArgs)
-        args.append(localRoot)
-        args.append(remote)
-        return run(args: args)
+        return runPairs(
+            pairs,
+            project: project,
+            withDelete: true,
+            userExcludes: project.codeExcludes
+        )
     }
 
     static func pull(project: ProjectConfig) -> RsyncResult {
-        let remote = project.remoteLogPath.hasSuffix("/") ? project.remoteLogPath : project.remoteLogPath + "/"
-        let local = project.localLogPath
+        let pairs = zip(project.remoteLogPaths, project.localLogPaths).map {
+            SubpathPair(label: labelFor(remotePath: $0.0), source: ensureTrailingSlash($0.0), dest: $0.1, gitignoreRoot: nil)
+        }
+        return runPairs(
+            pairs,
+            project: project,
+            withDelete: false,
+            userExcludes: project.logExcludes
+        )
+    }
 
-        // No --delete on the pull direction; we don't want to clobber local logs.
-        var args = commonArgs() + ["-e", sshCommand(project)]
-        args.append(remote)
-        args.append(local)
-        return run(args: args)
+    // MARK: - Multi-subpath runner
+
+    private struct SubpathPair {
+        /// Short name used in error messages (e.g. "frontend").
+        let label: String
+        /// rsync source argument (trailing-slash if a local directory).
+        let source: String
+        /// rsync destination argument.
+        let dest: String
+        /// If set, read this local directory's .gitignore as an --exclude-from.
+        /// nil for the pull direction (remote filesystem — no .gitignore to read).
+        let gitignoreRoot: String?
+    }
+
+    private static func runPairs(
+        _ pairs: [SubpathPair],
+        project: ProjectConfig,
+        withDelete: Bool,
+        userExcludes: [String]
+    ) -> RsyncResult {
+        guard !pairs.isEmpty else {
+            return RsyncResult(exitCode: 0, stdout: "", stderr: "", timedOut: false)
+        }
+
+        var aggregatedOut = ""
+        let ssh = sshCommand(project)
+
+        for pair in pairs {
+            var args = commonArgs()
+            if withDelete { args.append("--delete") }
+            args.append(contentsOf: ["-e", ssh])
+
+            if let root = pair.gitignoreRoot,
+               let ef = IgnoreRules.excludeFromFile(forProjectAt: root) {
+                args.append("--exclude-from=\(ef.path)")
+            }
+            for name in userExcludes where !name.isEmpty {
+                args.append("--exclude=\(name)")
+            }
+            args.append(contentsOf: project.extraRsyncArgs)
+            args.append(pair.source)
+            args.append(pair.dest)
+
+            let result = run(args: args)
+            aggregatedOut += result.stdout
+            if !result.ok {
+                // Prefix stderr with the subpath label so MenuBar errors stay identifiable.
+                let prefixed = "[\(pair.label)] " + result.stderr
+                return RsyncResult(
+                    exitCode: result.exitCode == 0 ? -1 : result.exitCode,
+                    stdout: aggregatedOut,
+                    stderr: prefixed,
+                    timedOut: result.timedOut
+                )
+            }
+        }
+
+        return RsyncResult(exitCode: 0, stdout: aggregatedOut, stderr: "", timedOut: false)
+    }
+
+    private static func ensureTrailingSlash(_ s: String) -> String {
+        s.hasSuffix("/") ? s : s + "/"
+    }
+
+    /// Last path component of a local path. Used as the error-message label.
+    private static func labelFor(localPath: String) -> String {
+        (localPath as NSString).lastPathComponent
+    }
+
+    /// Last path component of a remote path ("user@host:/a/b" → "b").
+    private static func labelFor(remotePath: String) -> String {
+        let pathPart: String
+        if let colon = remotePath.firstIndex(of: ":") {
+            pathPart = String(remotePath[remotePath.index(after: colon)...])
+        } else {
+            pathPart = remotePath
+        }
+        return (pathPart as NSString).lastPathComponent
     }
 
     private static func commonArgs() -> [String] {

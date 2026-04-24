@@ -8,7 +8,7 @@ final class SyncWorker {
     private let log: Logger
     private let queue: DispatchQueue
 
-    private var watcher: FileWatcher?
+    private var watchers: [FileWatcher] = []
     private var pullTimer: Timer?
 
     // Dirty / backoff state, per direction.
@@ -35,22 +35,24 @@ final class SyncWorker {
     func start() {
         guard let project = store.project(id) else { return }
 
-        if watcher == nil {
-            let w = FileWatcher(path: project.localCodePath) { [weak self] in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.codeDirty = true
-                    // A fresh FS event is user activity — bypass backoff.
-                    self.codeBackoff = 0
-                    self.cancelCodeRetry()
-                    self.attemptPush()
+        if project.pushCodeEnabled, watchers.isEmpty {
+            for path in project.localCodePaths where !path.isEmpty {
+                let w = FileWatcher(path: path) { [weak self] in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        self.codeDirty = true
+                        // A fresh FS event is user activity — bypass backoff.
+                        self.codeBackoff = 0
+                        self.cancelCodeRetry()
+                        self.attemptPush()
+                    }
                 }
+                w.start()
+                watchers.append(w)
             }
-            w.start()
-            watcher = w
         }
 
-        if pullTimer == nil {
+        if project.pullLogEnabled, pullTimer == nil {
             let interval = max(10, TimeInterval(project.pullIntervalSeconds))
             let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
                 Task { @MainActor in
@@ -67,8 +69,8 @@ final class SyncWorker {
     }
 
     func stop() {
-        watcher?.stop()
-        watcher = nil
+        for w in watchers { w.stop() }
+        watchers.removeAll()
         pullTimer?.invalidate()
         pullTimer = nil
         cancelCodeRetry()
@@ -87,21 +89,22 @@ final class SyncWorker {
     }
 
     func syncNow() {
-        codeDirty = true
-        logDirty = true
+        guard let project = store.project(id) else { return }
+        if project.pushCodeEnabled { codeDirty = true }
+        if project.pullLogEnabled  { logDirty  = true }
         codeBackoff = 0
         logBackoff = 0
         cancelCodeRetry()
         cancelLogRetry()
-        attemptPush()
-        attemptPull()
+        if project.pushCodeEnabled { attemptPush() }
+        if project.pullLogEnabled  { attemptPull() }
     }
 
     // MARK: - Push
 
     private func attemptPush() {
+        guard let project = store.project(id), project.pushCodeEnabled, project.isComplete else { return }
         guard codeDirty, !codeRunning else { return }
-        guard let project = store.project(id), project.isComplete else { return }
 
         codeRunning = true
         store.setStatus(id, .code, .syncing)
@@ -152,8 +155,8 @@ final class SyncWorker {
     // MARK: - Pull
 
     private func attemptPull() {
+        guard let project = store.project(id), project.pullLogEnabled, project.isComplete else { return }
         guard logDirty, !logRunning else { return }
-        guard let project = store.project(id), project.isComplete else { return }
 
         logRunning = true
         store.setStatus(id, .log, .syncing)

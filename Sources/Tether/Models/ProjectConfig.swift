@@ -10,9 +10,20 @@ struct ProjectConfig: Codable, Identifiable, Hashable {
     /// Remote project root, e.g. "user@host:/srv/myapp".
     var remoteRootPath: String
 
-    /// Sub-paths relative to the roots above.
-    var codeSubpath: String
-    var logSubpath: String
+    /// Sub-paths relative to the roots above. Symmetric: each entry is used for
+    /// both the local and the remote side.
+    var codeSubpaths: [String]
+    var logSubpaths:  [String]
+
+    /// Per-direction toggles. When false the corresponding watcher/timer is not
+    /// started and any call to push/pull is a no-op.
+    var pushCodeEnabled: Bool
+    var pullLogEnabled:  Bool
+
+    /// Extra rsync `--exclude=<name>` entries, on top of the project's .gitignore.
+    /// Entries are matched by rsync as file-or-directory names at any depth.
+    var codeExcludes: [String]
+    var logExcludes:  [String]
 
     var pullIntervalSeconds: Int
 
@@ -25,8 +36,12 @@ struct ProjectConfig: Codable, Identifiable, Hashable {
         isEnabled: Bool = false,
         localRootPath: String = "",
         remoteRootPath: String = "",
-        codeSubpath: String = "code",
-        logSubpath: String = "logs",
+        codeSubpaths: [String] = ["code"],
+        logSubpaths:  [String] = ["logs"],
+        pushCodeEnabled: Bool = true,
+        pullLogEnabled:  Bool = true,
+        codeExcludes: [String] = [],
+        logExcludes:  [String] = [],
         pullIntervalSeconds: Int = 300,
         sshIdentityFile: String? = nil,
         extraRsyncArgs: [String] = []
@@ -36,27 +51,34 @@ struct ProjectConfig: Codable, Identifiable, Hashable {
         self.isEnabled = isEnabled
         self.localRootPath = localRootPath
         self.remoteRootPath = remoteRootPath
-        self.codeSubpath = codeSubpath
-        self.logSubpath = logSubpath
+        self.codeSubpaths = codeSubpaths
+        self.logSubpaths = logSubpaths
+        self.pushCodeEnabled = pushCodeEnabled
+        self.pullLogEnabled = pullLogEnabled
+        self.codeExcludes = codeExcludes
+        self.logExcludes = logExcludes
         self.pullIntervalSeconds = pullIntervalSeconds
         self.sshIdentityFile = sshIdentityFile
         self.extraRsyncArgs = extraRsyncArgs
     }
 
     var isComplete: Bool {
-        !name.isEmpty
-            && !localRootPath.isEmpty
-            && !remoteRootPath.isEmpty
-            && !codeSubpath.isEmpty
-            && !logSubpath.isEmpty
-            && pullIntervalSeconds > 0
+        guard !name.isEmpty,
+              !localRootPath.isEmpty,
+              !remoteRootPath.isEmpty,
+              pullIntervalSeconds > 0 else { return false }
+        let codeSubs = codeSubpaths.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let logSubs  = logSubpaths.filter  { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        if pushCodeEnabled && codeSubs.isEmpty { return false }
+        if pullLogEnabled  && logSubs.isEmpty  { return false }
+        return pushCodeEnabled || pullLogEnabled
     }
 
-    /// Concrete resolved paths — roots + subpaths joined.
-    var localCodePath: String  { ProjectConfig.join(localRootPath,  codeSubpath) }
-    var localLogPath:  String  { ProjectConfig.join(localRootPath,  logSubpath)  }
-    var remoteCodePath: String { ProjectConfig.joinRemote(remoteRootPath, codeSubpath) }
-    var remoteLogPath:  String { ProjectConfig.joinRemote(remoteRootPath, logSubpath)  }
+    /// Concrete resolved paths — roots + each subpath joined.
+    var localCodePaths:  [String] { codeSubpaths.map { Self.join(localRootPath, $0) } }
+    var remoteCodePaths: [String] { codeSubpaths.map { Self.joinRemote(remoteRootPath, $0) } }
+    var localLogPaths:   [String] { logSubpaths.map  { Self.join(localRootPath, $0) } }
+    var remoteLogPaths:  [String] { logSubpaths.map  { Self.joinRemote(remoteRootPath, $0) } }
 
     private static func join(_ root: String, _ sub: String) -> String {
         let r = root.hasSuffix("/") ? String(root.dropLast()) : root
@@ -74,6 +96,71 @@ struct ProjectConfig: Codable, Identifiable, Hashable {
         var path = String(root[root.index(after: colon)...])
         if path.hasSuffix("/") { path.removeLast() }
         return s.isEmpty ? "\(host):\(path)" : "\(host):\(path)/\(s)"
+    }
+
+    // MARK: - Codable (with backward compat for singular keys)
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, isEnabled
+        case localRootPath, remoteRootPath
+        case codeSubpaths, logSubpaths
+        case codeSubpath, logSubpath   // legacy singular keys
+        case pushCodeEnabled, pullLogEnabled
+        case codeExcludes, logExcludes
+        case pullIntervalSeconds
+        case sshIdentityFile, extraRsyncArgs
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        self.isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false
+        self.localRootPath = try c.decodeIfPresent(String.self, forKey: .localRootPath) ?? ""
+        self.remoteRootPath = try c.decodeIfPresent(String.self, forKey: .remoteRootPath) ?? ""
+
+        if let arr = try c.decodeIfPresent([String].self, forKey: .codeSubpaths) {
+            self.codeSubpaths = arr
+        } else if let single = try c.decodeIfPresent(String.self, forKey: .codeSubpath) {
+            self.codeSubpaths = [single]
+        } else {
+            self.codeSubpaths = ["code"]
+        }
+
+        if let arr = try c.decodeIfPresent([String].self, forKey: .logSubpaths) {
+            self.logSubpaths = arr
+        } else if let single = try c.decodeIfPresent(String.self, forKey: .logSubpath) {
+            self.logSubpaths = [single]
+        } else {
+            self.logSubpaths = ["logs"]
+        }
+
+        self.pushCodeEnabled = try c.decodeIfPresent(Bool.self, forKey: .pushCodeEnabled) ?? true
+        self.pullLogEnabled  = try c.decodeIfPresent(Bool.self, forKey: .pullLogEnabled)  ?? true
+        self.codeExcludes = try c.decodeIfPresent([String].self, forKey: .codeExcludes) ?? []
+        self.logExcludes  = try c.decodeIfPresent([String].self, forKey: .logExcludes)  ?? []
+
+        self.pullIntervalSeconds = try c.decodeIfPresent(Int.self, forKey: .pullIntervalSeconds) ?? 300
+        self.sshIdentityFile = try c.decodeIfPresent(String.self, forKey: .sshIdentityFile)
+        self.extraRsyncArgs = try c.decodeIfPresent([String].self, forKey: .extraRsyncArgs) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(isEnabled, forKey: .isEnabled)
+        try c.encode(localRootPath, forKey: .localRootPath)
+        try c.encode(remoteRootPath, forKey: .remoteRootPath)
+        try c.encode(codeSubpaths, forKey: .codeSubpaths)
+        try c.encode(logSubpaths, forKey: .logSubpaths)
+        try c.encode(pushCodeEnabled, forKey: .pushCodeEnabled)
+        try c.encode(pullLogEnabled, forKey: .pullLogEnabled)
+        try c.encode(codeExcludes, forKey: .codeExcludes)
+        try c.encode(logExcludes, forKey: .logExcludes)
+        try c.encode(pullIntervalSeconds, forKey: .pullIntervalSeconds)
+        try c.encodeIfPresent(sshIdentityFile, forKey: .sshIdentityFile)
+        try c.encode(extraRsyncArgs, forKey: .extraRsyncArgs)
     }
 }
 
