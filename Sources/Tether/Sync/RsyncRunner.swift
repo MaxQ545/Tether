@@ -11,7 +11,7 @@ struct RsyncResult {
 }
 
 enum RsyncRunner {
-    private static let log = Logger(subsystem: "app.sync", category: "Rsync")
+    private static let log = Logger(subsystem: "app.tether", category: "Rsync")
 
     /// Hard upper bound on a single rsync invocation. Guards against ssh hanging
     /// during auth / DNS / blackholed TCP that the rsync/ssh built-in timeouts miss.

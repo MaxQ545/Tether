@@ -28,8 +28,8 @@ final class SyncWorker {
     init(project: ProjectConfig, store: ConfigStore) {
         self.id = project.id
         self.store = store
-        self.log = Logger(subsystem: "app.sync", category: "worker.\(project.name)")
-        self.queue = DispatchQueue(label: "app.sync.worker.\(project.id.uuidString)", qos: .utility)
+        self.log = Logger(subsystem: "app.tether", category: "worker.\(project.name)")
+        self.queue = DispatchQueue(label: "app.tether.worker.\(project.id.uuidString)", qos: .utility)
     }
 
     func start() {

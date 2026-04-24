@@ -56,7 +56,7 @@ struct MenuBarContent: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            Text("Sync")
+            Text("Tether")
                 .font(.headline)
             Spacer()
             Button {

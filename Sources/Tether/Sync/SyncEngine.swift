@@ -7,13 +7,13 @@ import os
 final class SyncEngine {
     static let shared = SyncEngine()
 
-    private static let log = Logger(subsystem: "app.sync", category: "Engine")
+    private static let log = Logger(subsystem: "app.tether", category: "Engine")
 
     private var workers: [UUID: SyncWorker] = [:]
     private var observers: [NSObjectProtocol] = []
 
     private let pathMonitor = NWPathMonitor()
-    private let pathQueue = DispatchQueue(label: "app.sync.pathMonitor", qos: .utility)
+    private let pathQueue = DispatchQueue(label: "app.tether.pathMonitor", qos: .utility)
     private var lastPathSatisfied: Bool = true
 
     private init() {}

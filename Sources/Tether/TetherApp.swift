@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct SyncApp: App {
+struct TetherApp: App {
     @State private var store = ConfigStore.shared
 
     init() {

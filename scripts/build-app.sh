@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build the Sync executable and wrap it in a proper .app bundle so that
+# Build the Tether executable and wrap it in a proper .app bundle so that
 # LSUIElement (status-bar only) is honored by the macOS launcher.
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,14 +13,14 @@ echo "==> swift build -c $config"
 swift build -c "$config"
 
 bin_path="$(swift build -c "$config" --show-bin-path)"
-app_dir="$here/build/Sync.app"
+app_dir="$here/build/Tether.app"
 contents="$app_dir/Contents"
 
 echo "==> assembling $app_dir"
 rm -rf "$app_dir"
 mkdir -p "$contents/MacOS" "$contents/Resources"
 
-cp "$bin_path/Sync" "$contents/MacOS/Sync"
+cp "$bin_path/Tether" "$contents/MacOS/Tether"
 cp "$here/Resources/Info.plist" "$contents/Info.plist"
 
 # Copy any non-plist files from Resources/ into the bundle (e.g. AppIcon.icns).

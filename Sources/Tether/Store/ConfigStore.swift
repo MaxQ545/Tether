@@ -7,7 +7,7 @@ import os
 final class ConfigStore {
     static let shared = ConfigStore()
 
-    private static let log = Logger(subsystem: "app.sync", category: "ConfigStore")
+    private static let log = Logger(subsystem: "app.tether", category: "ConfigStore")
 
     private(set) var projects: [ProjectConfig] = []
     private(set) var status: [UUID: ProjectStatus] = [:]
@@ -23,7 +23,7 @@ final class ConfigStore {
             create: true
         )
         let dir = (appSupport ?? URL(fileURLWithPath: NSHomeDirectory()))
-            .appendingPathComponent("Sync", isDirectory: true)
+            .appendingPathComponent("Tether", isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         self.fileURL = dir.appendingPathComponent("config.json")
         load()
@@ -118,9 +118,9 @@ final class ConfigStore {
 }
 
 extension Notification.Name {
-    static let configProjectAdded    = Notification.Name("app.sync.configProjectAdded")
-    static let configProjectRemoved  = Notification.Name("app.sync.configProjectRemoved")
-    static let configProjectUpdated  = Notification.Name("app.sync.configProjectUpdated")
-    static let configProjectEnabled  = Notification.Name("app.sync.configProjectEnabled")
-    static let configProjectDisabled = Notification.Name("app.sync.configProjectDisabled")
+    static let configProjectAdded    = Notification.Name("app.tether.configProjectAdded")
+    static let configProjectRemoved  = Notification.Name("app.tether.configProjectRemoved")
+    static let configProjectUpdated  = Notification.Name("app.tether.configProjectUpdated")
+    static let configProjectEnabled  = Notification.Name("app.tether.configProjectEnabled")
+    static let configProjectDisabled = Notification.Name("app.tether.configProjectDisabled")
 }

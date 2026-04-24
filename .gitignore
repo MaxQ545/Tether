@@ -46,7 +46,6 @@ fastlane/test_output
 # Tether build outputs
 build/
 dist/
-Sync.app/
 Tether.app/
 
 # macOS

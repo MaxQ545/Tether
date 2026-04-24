@@ -2,15 +2,15 @@
 import PackageDescription
 
 let package = Package(
-    name: "Sync",
+    name: "Tether",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "Sync", targets: ["Sync"])
+        .executable(name: "Tether", targets: ["Tether"])
     ],
     targets: [
         .executableTarget(
-            name: "Sync",
-            path: "Sources/Sync"
+            name: "Tether",
+            path: "Sources/Tether"
         )
     ]
 )
