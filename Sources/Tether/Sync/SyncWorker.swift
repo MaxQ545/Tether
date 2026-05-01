@@ -12,7 +12,7 @@ final class SyncWorker {
     private var pullTimer: Timer?
 
     // Dirty / backoff state, per direction.
-    private var codeDirty: Bool = false
+    private var codeDirtySubpathIndexes: Set<Int> = []
     private var logDirty:  Bool = true     // first run should pull immediately
     private var codeBackoff: TimeInterval = 0
     private var logBackoff:  TimeInterval = 0
@@ -36,11 +36,11 @@ final class SyncWorker {
         guard let project = store.project(id) else { return }
 
         if project.pushCodeEnabled, watchers.isEmpty {
-            for path in project.localCodePaths where !path.isEmpty {
+            for (index, path) in project.localCodePaths.enumerated() where !path.isEmpty {
                 let w = FileWatcher(path: path) { [weak self] in
                     Task { @MainActor in
                         guard let self else { return }
-                        self.codeDirty = true
+                        self.codeDirtySubpathIndexes.insert(index)
                         // A fresh FS event is user activity — bypass backoff.
                         self.codeBackoff = 0
                         self.cancelCodeRetry()
@@ -73,6 +73,7 @@ final class SyncWorker {
         watchers.removeAll()
         pullTimer?.invalidate()
         pullTimer = nil
+        codeDirtySubpathIndexes.removeAll()
         cancelCodeRetry()
         cancelLogRetry()
     }
@@ -83,14 +84,14 @@ final class SyncWorker {
         cancelLogRetry()
         codeBackoff = 0
         logBackoff = 0
-        log.info("flushing (\(reason, privacy: .public)) codeDirty=\(self.codeDirty) logDirty=\(self.logDirty)")
-        if codeDirty { attemptPush() }
+        log.info("flushing (\(reason, privacy: .public)) codeDirtyCount=\(self.codeDirtySubpathIndexes.count) logDirty=\(self.logDirty)")
+        if !codeDirtySubpathIndexes.isEmpty { attemptPush() }
         if logDirty  { attemptPull() }
     }
 
     func syncNow() {
         guard let project = store.project(id) else { return }
-        if project.pushCodeEnabled { codeDirty = true }
+        if project.pushCodeEnabled { codeDirtySubpathIndexes = Set(project.localCodePaths.indices) }
         if project.pullLogEnabled  { logDirty  = true }
         codeBackoff = 0
         logBackoff = 0
@@ -104,32 +105,40 @@ final class SyncWorker {
 
     private func attemptPush() {
         guard let project = store.project(id), project.pushCodeEnabled, project.isComplete else { return }
-        guard codeDirty, !codeRunning else { return }
+        guard !codeRunning else { return }
+
+        let validIndexes = Set(project.localCodePaths.indices)
+        codeDirtySubpathIndexes.formIntersection(validIndexes)
+        let indexesToPush = codeDirtySubpathIndexes
+        guard !indexesToPush.isEmpty else { return }
+
+        codeDirtySubpathIndexes.subtract(indexesToPush)
 
         codeRunning = true
         store.setStatus(id, .code, .syncing)
 
         queue.async { [weak self] in
-            let result = RsyncRunner.push(project: project)
+            let outcome = RsyncRunner.push(project: project, subpathIndexes: indexesToPush)
             Task { @MainActor in
-                self?.afterPush(result: result)
+                self?.afterPush(outcome: outcome, attemptedIndexes: indexesToPush)
             }
         }
     }
 
     @MainActor
-    private func afterPush(result: RsyncResult) {
+    private func afterPush(outcome: MultiSyncResult, attemptedIndexes: Set<Int>) {
         codeRunning = false
-        if result.ok {
+        if outcome.result.ok {
             log.info("push ok")
-            codeDirty = false
             codeBackoff = 0
             store.setStatus(id, .code, .ok(at: Date()))
-            // If more FS events arrived during the rsync and flipped codeDirty back on,
-            // run another immediately.
-            if codeDirty { attemptPush() }
+            // If more FS events arrived during the rsync, run those subpaths immediately.
+            if !codeDirtySubpathIndexes.isEmpty { attemptPush() }
         } else {
-            let msg = errorMessage(from: result)
+            // Only re-queue subpaths that didn't already succeed before the run aborted.
+            let unfinished = attemptedIndexes.subtracting(outcome.succeededIndexes)
+            codeDirtySubpathIndexes.formUnion(unfinished)
+            let msg = errorMessage(from: outcome.result)
             log.error("push failed: \(msg, privacy: .public)")
             scheduleCodeRetry(reason: msg)
         }
@@ -158,6 +167,7 @@ final class SyncWorker {
         guard let project = store.project(id), project.pullLogEnabled, project.isComplete else { return }
         guard logDirty, !logRunning else { return }
 
+        logDirty = false
         logRunning = true
         store.setStatus(id, .log, .syncing)
 
@@ -174,10 +184,11 @@ final class SyncWorker {
         logRunning = false
         if result.ok {
             log.info("pull ok")
-            logDirty = false
             logBackoff = 0
             store.setStatus(id, .log, .ok(at: Date()))
+            if logDirty { attemptPull() }
         } else {
+            logDirty = true
             let msg = errorMessage(from: result)
             log.error("pull failed: \(msg, privacy: .public)")
             scheduleLogRetry(reason: msg)

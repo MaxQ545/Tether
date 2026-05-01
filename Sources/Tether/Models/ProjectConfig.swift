@@ -51,12 +51,12 @@ struct ProjectConfig: Codable, Identifiable, Hashable {
         self.isEnabled = isEnabled
         self.localRootPath = localRootPath
         self.remoteRootPath = remoteRootPath
-        self.codeSubpaths = codeSubpaths
-        self.logSubpaths = logSubpaths
+        self.codeSubpaths = Self.sanitizeLines(codeSubpaths)
+        self.logSubpaths = Self.sanitizeLines(logSubpaths)
         self.pushCodeEnabled = pushCodeEnabled
         self.pullLogEnabled = pullLogEnabled
-        self.codeExcludes = codeExcludes
-        self.logExcludes = logExcludes
+        self.codeExcludes = Self.sanitizeLines(codeExcludes)
+        self.logExcludes = Self.sanitizeLines(logExcludes)
         self.pullIntervalSeconds = pullIntervalSeconds
         self.sshIdentityFile = sshIdentityFile
         self.extraRsyncArgs = extraRsyncArgs
@@ -67,18 +67,26 @@ struct ProjectConfig: Codable, Identifiable, Hashable {
               !localRootPath.isEmpty,
               !remoteRootPath.isEmpty,
               pullIntervalSeconds > 0 else { return false }
-        let codeSubs = codeSubpaths.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        let logSubs  = logSubpaths.filter  { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        if pushCodeEnabled && codeSubs.isEmpty { return false }
-        if pullLogEnabled  && logSubs.isEmpty  { return false }
+        if pushCodeEnabled && normalizedCodeSubpaths.isEmpty { return false }
+        if pullLogEnabled  && normalizedLogSubpaths.isEmpty  { return false }
         return pushCodeEnabled || pullLogEnabled
     }
 
     /// Concrete resolved paths — roots + each subpath joined.
-    var localCodePaths:  [String] { codeSubpaths.map { Self.join(localRootPath, $0) } }
-    var remoteCodePaths: [String] { codeSubpaths.map { Self.joinRemote(remoteRootPath, $0) } }
-    var localLogPaths:   [String] { logSubpaths.map  { Self.join(localRootPath, $0) } }
-    var remoteLogPaths:  [String] { logSubpaths.map  { Self.joinRemote(remoteRootPath, $0) } }
+    var localCodePaths:  [String] { normalizedCodeSubpaths.map { Self.join(localRootPath, $0) } }
+    var remoteCodePaths: [String] { normalizedCodeSubpaths.map { Self.joinRemote(remoteRootPath, $0) } }
+    var localLogPaths:   [String] { normalizedLogSubpaths.map  { Self.join(localRootPath, $0) } }
+    var remoteLogPaths:  [String] { normalizedLogSubpaths.map  { Self.joinRemote(remoteRootPath, $0) } }
+
+    var normalizedCodeSubpaths: [String] { Self.sanitizeLines(codeSubpaths) }
+    var normalizedLogSubpaths:  [String] { Self.sanitizeLines(logSubpaths) }
+    var normalizedCodeExcludes: [String] { Self.sanitizeLines(codeExcludes) }
+    var normalizedLogExcludes:  [String] { Self.sanitizeLines(logExcludes) }
+
+    static func sanitizeLines(_ lines: [String]) -> [String] {
+        lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+             .filter { !$0.isEmpty }
+    }
 
     private static func join(_ root: String, _ sub: String) -> String {
         let r = root.hasSuffix("/") ? String(root.dropLast()) : root
@@ -120,25 +128,25 @@ struct ProjectConfig: Codable, Identifiable, Hashable {
         self.remoteRootPath = try c.decodeIfPresent(String.self, forKey: .remoteRootPath) ?? ""
 
         if let arr = try c.decodeIfPresent([String].self, forKey: .codeSubpaths) {
-            self.codeSubpaths = arr
+            self.codeSubpaths = Self.sanitizeLines(arr)
         } else if let single = try c.decodeIfPresent(String.self, forKey: .codeSubpath) {
-            self.codeSubpaths = [single]
+            self.codeSubpaths = Self.sanitizeLines([single])
         } else {
             self.codeSubpaths = ["code"]
         }
 
         if let arr = try c.decodeIfPresent([String].self, forKey: .logSubpaths) {
-            self.logSubpaths = arr
+            self.logSubpaths = Self.sanitizeLines(arr)
         } else if let single = try c.decodeIfPresent(String.self, forKey: .logSubpath) {
-            self.logSubpaths = [single]
+            self.logSubpaths = Self.sanitizeLines([single])
         } else {
             self.logSubpaths = ["logs"]
         }
 
         self.pushCodeEnabled = try c.decodeIfPresent(Bool.self, forKey: .pushCodeEnabled) ?? true
         self.pullLogEnabled  = try c.decodeIfPresent(Bool.self, forKey: .pullLogEnabled)  ?? true
-        self.codeExcludes = try c.decodeIfPresent([String].self, forKey: .codeExcludes) ?? []
-        self.logExcludes  = try c.decodeIfPresent([String].self, forKey: .logExcludes)  ?? []
+        self.codeExcludes = Self.sanitizeLines(try c.decodeIfPresent([String].self, forKey: .codeExcludes) ?? [])
+        self.logExcludes  = Self.sanitizeLines(try c.decodeIfPresent([String].self, forKey: .logExcludes)  ?? [])
 
         self.pullIntervalSeconds = try c.decodeIfPresent(Int.self, forKey: .pullIntervalSeconds) ?? 300
         self.sshIdentityFile = try c.decodeIfPresent(String.self, forKey: .sshIdentityFile)

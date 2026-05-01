@@ -135,20 +135,15 @@ struct ProjectEditorView: View {
     }
 
     private func save() {
-        draft.codeSubpaths = sanitize(draft.codeSubpaths)
-        draft.logSubpaths  = sanitize(draft.logSubpaths)
-        draft.codeExcludes = sanitize(draft.codeExcludes)
-        draft.logExcludes  = sanitize(draft.logExcludes)
+        draft.codeSubpaths = ProjectConfig.sanitizeLines(draft.codeSubpaths)
+        draft.logSubpaths  = ProjectConfig.sanitizeLines(draft.logSubpaths)
+        draft.codeExcludes = ProjectConfig.sanitizeLines(draft.codeExcludes)
+        draft.logExcludes  = ProjectConfig.sanitizeLines(draft.logExcludes)
         if store.project(draft.id) != nil {
             store.update(draft)
         } else {
             store.add(draft)
         }
-    }
-
-    private func sanitize(_ lines: [String]) -> [String] {
-        lines.map { $0.trimmingCharacters(in: .whitespaces) }
-             .filter { !$0.isEmpty }
     }
 
     @ViewBuilder
@@ -186,7 +181,7 @@ struct ProjectEditorView: View {
             )
         }
         if rootFilled {
-            let nonEmpty = subpaths.wrappedValue.enumerated().filter { !$0.element.isEmpty }
+            let nonEmpty = Array(ProjectConfig.sanitizeLines(subpaths.wrappedValue).enumerated())
             let shown = nonEmpty.prefix(3)
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(Array(shown), id: \.offset) { entry in
@@ -219,6 +214,9 @@ struct ProjectEditorView: View {
                 )
             )
         }
+        Text("rsync patterns: bare name matches at any depth; trailing / = directory only; * ? […] are globs.")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
     }
 
     /// Multi-line text editor that treats Enter as a newline instead of firing

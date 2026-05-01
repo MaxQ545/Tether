@@ -10,6 +10,13 @@ struct RsyncResult {
     var ok: Bool { exitCode == 0 && !timedOut }
 }
 
+/// Result of a multi-subpath push: the overall rsync result plus which input
+/// subpath indexes actually completed successfully before the run aborted.
+struct MultiSyncResult {
+    let result: RsyncResult
+    let succeededIndexes: Set<Int>
+}
+
 enum RsyncRunner {
     private static let log = Logger(subsystem: "app.tether", category: "Rsync")
 
@@ -70,28 +77,47 @@ enum RsyncRunner {
         )
     }
 
-    static func push(project: ProjectConfig) -> RsyncResult {
-        let pairs = zip(project.localCodePaths, project.remoteCodePaths).map {
-            SubpathPair(label: labelFor(localPath: $0.0), source: ensureTrailingSlash($0.0), dest: $0.1, gitignoreRoot: $0.0)
-        }
-        return runPairs(
-            pairs,
+    static func push(project: ProjectConfig, subpathIndexes: Set<Int>) -> MultiSyncResult {
+        let indexed = zip(project.localCodePaths, project.remoteCodePaths)
+            .enumerated()
+            .compactMap { entry -> (Int, SubpathPair)? in
+                let (idx, paths) = entry
+                guard subpathIndexes.contains(idx) else { return nil }
+                let (local, remote) = paths
+                return (idx, SubpathPair(
+                    label: labelFor(localPath: local),
+                    source: ensureTrailingSlash(local),
+                    dest: remote,
+                    gitignoreRoot: local
+                ))
+            }
+        return runIndexedPairs(
+            indexed,
             project: project,
             withDelete: true,
-            userExcludes: project.codeExcludes
+            userExcludes: project.normalizedCodeExcludes
         )
     }
 
     static func pull(project: ProjectConfig) -> RsyncResult {
-        let pairs = zip(project.remoteLogPaths, project.localLogPaths).map {
-            SubpathPair(label: labelFor(remotePath: $0.0), source: ensureTrailingSlash($0.0), dest: $0.1, gitignoreRoot: nil)
-        }
-        return runPairs(
-            pairs,
+        let indexed = zip(project.remoteLogPaths, project.localLogPaths)
+            .enumerated()
+            .map { entry -> (Int, SubpathPair) in
+                let (idx, paths) = entry
+                let (remote, local) = paths
+                return (idx, SubpathPair(
+                    label: labelFor(remotePath: remote),
+                    source: ensureTrailingSlash(remote),
+                    dest: local,
+                    gitignoreRoot: nil
+                ))
+            }
+        return runIndexedPairs(
+            indexed,
             project: project,
             withDelete: false,
-            userExcludes: project.logExcludes
-        )
+            userExcludes: project.normalizedLogExcludes
+        ).result
     }
 
     // MARK: - Multi-subpath runner
@@ -108,20 +134,24 @@ enum RsyncRunner {
         let gitignoreRoot: String?
     }
 
-    private static func runPairs(
-        _ pairs: [SubpathPair],
+    private static func runIndexedPairs(
+        _ pairs: [(Int, SubpathPair)],
         project: ProjectConfig,
         withDelete: Bool,
         userExcludes: [String]
-    ) -> RsyncResult {
+    ) -> MultiSyncResult {
         guard !pairs.isEmpty else {
-            return RsyncResult(exitCode: 0, stdout: "", stderr: "", timedOut: false)
+            return MultiSyncResult(
+                result: RsyncResult(exitCode: 0, stdout: "", stderr: "", timedOut: false),
+                succeededIndexes: []
+            )
         }
 
         var aggregatedOut = ""
+        var succeeded: Set<Int> = []
         let ssh = sshCommand(project)
 
-        for pair in pairs {
+        for (index, pair) in pairs {
             var args = commonArgs()
             if withDelete { args.append("--delete") }
             args.append(contentsOf: ["-e", ssh])
@@ -130,7 +160,7 @@ enum RsyncRunner {
                let ef = IgnoreRules.excludeFromFile(forProjectAt: root) {
                 args.append("--exclude-from=\(ef.path)")
             }
-            for name in userExcludes where !name.isEmpty {
+            for name in userExcludes {
                 args.append("--exclude=\(name)")
             }
             args.append(contentsOf: project.extraRsyncArgs)
@@ -142,16 +172,23 @@ enum RsyncRunner {
             if !result.ok {
                 // Prefix stderr with the subpath label so MenuBar errors stay identifiable.
                 let prefixed = "[\(pair.label)] " + result.stderr
-                return RsyncResult(
-                    exitCode: result.exitCode == 0 ? -1 : result.exitCode,
-                    stdout: aggregatedOut,
-                    stderr: prefixed,
-                    timedOut: result.timedOut
+                return MultiSyncResult(
+                    result: RsyncResult(
+                        exitCode: result.exitCode == 0 ? -1 : result.exitCode,
+                        stdout: aggregatedOut,
+                        stderr: prefixed,
+                        timedOut: result.timedOut
+                    ),
+                    succeededIndexes: succeeded
                 )
             }
+            succeeded.insert(index)
         }
 
-        return RsyncResult(exitCode: 0, stdout: aggregatedOut, stderr: "", timedOut: false)
+        return MultiSyncResult(
+            result: RsyncResult(exitCode: 0, stdout: aggregatedOut, stderr: "", timedOut: false),
+            succeededIndexes: succeeded
+        )
     }
 
     private static func ensureTrailingSlash(_ s: String) -> String {
