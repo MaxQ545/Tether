@@ -5,6 +5,7 @@ struct MenuBarContent: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(ConfigStore.self) private var store
 
+    @State private var launchAtLogin = LaunchAtLogin.shared
     @State private var pendingRemoval: ProjectConfig?
 
     var body: some View {
@@ -91,10 +92,39 @@ struct MenuBarContent: View {
                 openWindow(id: "project-editor", value: UUID())
             }
             Divider().padding(.leading, 38)
+            launchAtLoginRow
+            Divider().padding(.leading, 38)
             actionRow(icon: "power", title: "Quit") {
                 NSApp.terminate(nil)
             }
         }
+        .onAppear { launchAtLogin.refresh() }
+    }
+
+    private var launchAtLoginRow: some View {
+        let binding = Binding<Bool>(
+            get: { launchAtLogin.isEnabled },
+            set: { launchAtLogin.setEnabled($0) }
+        )
+        return HStack(spacing: 10) {
+            Image(systemName: "sunrise")
+                .frame(width: 18, alignment: .center)
+                .foregroundStyle(.secondary)
+            Text("Launch at Login")
+            Spacer()
+            if let error = launchAtLogin.lastError {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .help(error)
+            }
+            Toggle("", isOn: binding)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+        }
+        .contentShape(Rectangle())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Project row
