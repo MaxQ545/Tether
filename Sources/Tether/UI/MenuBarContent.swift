@@ -33,24 +33,6 @@ struct MenuBarContent: View {
         }
         .frame(width: 320)
         .padding(.vertical, 6)
-        .confirmationDialog(
-            "Remove project?",
-            isPresented: Binding(
-                get: { pendingRemoval != nil },
-                set: { if !$0 { pendingRemoval = nil } }
-            ),
-            presenting: pendingRemoval
-        ) { project in
-            Button("Remove \(project.name.isEmpty ? "project" : "“\(project.name)”")", role: .destructive) {
-                store.remove(project.id)
-                pendingRemoval = nil
-            }
-            Button("Cancel", role: .cancel) {
-                pendingRemoval = nil
-            }
-        } message: { project in
-            Text("This will stop syncing \(project.name.isEmpty ? "this project" : "“\(project.name)”") and delete its configuration. Local and remote files are not touched.")
-        }
     }
 
     // MARK: - Sections
@@ -131,6 +113,45 @@ struct MenuBarContent: View {
 
     @ViewBuilder
     private func projectRow(_ project: ProjectConfig) -> some View {
+        if pendingRemoval?.id == project.id {
+            removalConfirmRow(project)
+        } else {
+            normalProjectRow(project)
+        }
+    }
+
+    @ViewBuilder
+    private func removalConfirmRow(_ project: ProjectConfig) -> some View {
+        // Inline confirmation: a SwiftUI confirmationDialog would open a separate
+        // window, stealing focus from the MenuBarExtra popover and dismissing the
+        // whole menu before the user can click the button.
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Remove \(project.name.isEmpty ? "this project" : "“\(project.name)”")?")
+                .font(.body)
+            Text("Stops syncing and deletes its configuration. Local and remote files are not touched.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Spacer()
+                Button("Cancel") { pendingRemoval = nil }
+                    .keyboardShortcut(.cancelAction)
+                Button(role: .destructive) {
+                    let id = project.id
+                    pendingRemoval = nil
+                    store.remove(id)
+                } label: {
+                    Text("Remove")
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private func normalProjectRow(_ project: ProjectConfig) -> some View {
         let binding = Binding<Bool>(
             get: { project.isEnabled },
             set: { store.setEnabled(project.id, $0) }

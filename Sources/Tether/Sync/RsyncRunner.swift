@@ -100,6 +100,12 @@ enum RsyncRunner {
     }
 
     static func pull(project: ProjectConfig) -> RsyncResult {
+        // ML training outputs (checkpoints, tensorboard events) rewrite frequently;
+        // letting Spotlight index them blew /.Spotlight-V100/Store-V2 to 214 GB.
+        for local in project.localLogPaths {
+            ensureSpotlightExclusionMarker(at: local)
+        }
+
         let indexed = zip(project.remoteLogPaths, project.localLogPaths)
             .enumerated()
             .map { entry -> (Int, SubpathPair) in
@@ -189,6 +195,22 @@ enum RsyncRunner {
             result: RsyncResult(exitCode: 0, stdout: aggregatedOut, stderr: "", timedOut: false),
             succeededIndexes: succeeded
         )
+    }
+
+    /// Drop a `.metadata_never_index` marker so Spotlight skips this directory.
+    /// Creates the directory first if needed — rsync would create it on the first
+    /// pull anyway, but doing it here lets the marker land before any data does.
+    private static func ensureSpotlightExclusionMarker(at path: String) {
+        guard !path.isEmpty else { return }
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        if !fm.fileExists(atPath: path, isDirectory: &isDir) {
+            try? fm.createDirectory(atPath: path, withIntermediateDirectories: true)
+        }
+        let marker = (path as NSString).appendingPathComponent(".metadata_never_index")
+        if !fm.fileExists(atPath: marker) {
+            fm.createFile(atPath: marker, contents: nil)
+        }
     }
 
     private static func ensureTrailingSlash(_ s: String) -> String {
